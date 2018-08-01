@@ -13,31 +13,11 @@ minibatch_size = 64
 #play with this value more, potentially lower it to fifty
 k_disc_train_steps = 50
 
-#run two different examples through the discriminate network using the same weights and biases
-
-#problem with this network: many examples are generated near class boundaries, you need a way to generate more discriminative results
-
-#use experience replay, replaying experiences to the discriminator and generator so that they don't get trapped in local minimums
-#check out this paper for solving that issue
-#https://arxiv.org/pdf/1711.01575.pdf
-
-#note: the loss for the generator currently is based on both the examples in memory and the currently generated models
-#		a solution would be to create a real/dream dataset mix and a real/current_generated dataset mix
-#Note: the generator still degrades after about 60,000 steps
-
-
-#Note: the replay isn't working properly, it's degrading after only 20000 steps
-#Note: try updating G once for every k step updates of D, this keeps 
-
-#Note: as of now, the discriminator is learning how to draw zeroes very well
-#Note: the generator seems to really just get good at drawing one number at a time, first it was zeroes now it's 3s
-
-#Note: try changing the random data that is fed to the network, right now it's normalized, denormalize it
 
 class generator():
 	def __init__(self, layer_array, noise_size=10):
 		#layer_array is an array of tuples that defines the layers of the network
-		#
+		
 		self.layers = []
 		self.noise_size = noise_size
 
@@ -46,11 +26,6 @@ class generator():
 			layer_vars = self.generate_weights_biases(i, name="layer_" + str(count))
 			self.layers.append(layer_vars)
 			count += 1
-
-		'''input_weights, input_biases = self.generate_weights_biases([noise_size, 256])
-		input_weights'''
-	'''def forward_pass(self):
-		with tf.name_scope("generator_forward_pass"):'''
 
 	def forward_pass(self, batch_size=128):
 		with tf.name_scope("generator_forward_pass"):
@@ -67,7 +42,7 @@ class generator():
 		return [weights, biases]
 	def seed_noise(self, shape):
 		return tf.random_uniform(shape)
-		#return np.random.uniform(shape)
+		
 	def discriminator_loss(self, discriminator_grade):
 		loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=discriminator_grade, labels=tf.ones_like(discriminator_grade))
 		return loss
@@ -148,7 +123,6 @@ class discriminator():
 		return total_loss
 
 	def network_variables(self):
-		#it might not be the fastest way to go from rank 2 to 1 but it works
 		op_var = []
 		for chip in self.layers:
 			op_var.extend(chip)
