@@ -8,16 +8,12 @@ mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
 
 #a simple generative adversarial network for the MNIST dataset
 gen_seed_size = 3
-minibatch_size = 64
+minibatch_size = 128
 
-#play with this value more, potentially lower it to fifty
-k_disc_train_steps = 50
-
+k_disc_train_steps = 1
 
 class generator():
 	def __init__(self, layer_array, noise_size=10):
-		#layer_array is an array of tuples that defines the layers of the network
-		
 		self.layers = []
 		self.noise_size = noise_size
 
@@ -30,22 +26,32 @@ class generator():
 	def forward_pass(self, batch_size=128):
 		with tf.name_scope("generator_forward_pass"):
 			prev_layer_activation = self.seed_noise([batch_size, self.noise_size])
-			for layer_n in self.layers:
+			for i in range(len(self.layers) - 1):
+				
+				layer_n = self.layers[i]
 				mul_value = tf.matmul(prev_layer_activation, layer_n[0])
 				add_value = tf.add(mul_value, layer_n[1])
 				activation = tf.nn.relu(add_value)
 				prev_layer_activation = activation
-		return prev_layer_activation
+				print("worked_fine")
+
+			#produce linear output for the last layer
+			print("linearizing!")
+			op_mul = tf.matmul(prev_layer_activation, self.layers[-1][0])
+
+			
+			op_add = tf.add(op_mul, self.layers[-1][1])
+		return op_add
 	def generate_weights_biases(self, weights_shape, name):
 		weights = tf.Variable(tf.random_normal(weights_shape, stddev=0.1), name=name+"_weights")
 		biases = tf.Variable(tf.random_normal([weights_shape[1]]), name=name+"_biases")
 		return [weights, biases]
 	def seed_noise(self, shape):
-		return tf.random_uniform(shape)
+		return tf.random_normal(shape, stddev=0.1)
 		
 	def discriminator_loss(self, discriminator_grade):
 		loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=discriminator_grade, labels=tf.ones_like(discriminator_grade))
-		return loss
+		return tf.reduce_mean(loss)
 	def network_variables(self):
 		op_var = []
 		for chip in self.layers:
@@ -60,9 +66,8 @@ class discriminator():
 			self.layers.append(layer_vars)
 		self.layers.append(self.generate_weights_biases(layer_array[-1], name="output_layer"))
 
-		self.input_data = tf.placeholder(tf.float32, [None, input_size], name="discriminator_generated_data")
-		self.memory_tensor = tf.zeros([1, input_size])
-
+		self.memory_tensor = tf.zeros([1, input_size], dtype=tf.float32)
+		print("mem_tens: " + str(self.memory_tensor))
 		self.dropout_prob = tf.placeholder(tf.float32)
 
 		self.real_examples = tf.placeholder(tf.float32, [None, input_size], name="discriminator_real_data")
@@ -71,21 +76,20 @@ class discriminator():
 		biases = tf.Variable(tf.random_normal([weights_shape[1]]), name=name+"_biases")
 		return [weights, biases]
 	def forward_pass(self, input_value, batch_size=128):
-		#this function will do a forward pass with both the memory tensor and the current generator tensor
+		
 		with tf.name_scope("discriminator_forward_pass"):
 			prev_layer_activation = input_value
 			for i in range(len(self.layers) - 1):
-				
+				print("disc_normal_forward")
 				layer_n = self.layers[i]
 				mul_value = tf.matmul(prev_layer_activation, layer_n[0])
 				add_value = tf.add(mul_value, layer_n[1])
 				activation = tf.nn.relu(add_value)
 				prev_layer_activation = activation
 
-			#add dropout to the activation of the 2nd to last layer
-			prev_layer_activation = tf.nn.dropout(prev_layer_activation, self.dropout_prob)
+			
 			op_mul = tf.matmul(prev_layer_activation, self.layers[-1][0])
-			op_add = tf.add(mul_value, self.layers[-1][1])
+			op_add = tf.add(op_mul, self.layers[-1][1])
 
 		#change the last layer so that it doesn't do ReLU function
 		with tf.name_scope("memrise"):
@@ -107,6 +111,9 @@ class discriminator():
 
 	def generator_loss(self, generated_examples):
 		#toshiba
+		print("--------generated_ex-----------")
+		print(generated_examples)
+		print("-------------------------------")
 		#real_example_processing
 		real_logits = self.forward_pass(self.real_examples)
 		generator_logits = self.forward_pass(generated_examples)
@@ -119,46 +126,98 @@ class discriminator():
 		gen_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=generator_logits, labels=tf.zeros_like(generator_logits))
 		mem_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=memory_logits, labels=tf.zeros_like(memory_logits))
 
-		total_loss = tf.add_n([real_loss, gen_loss, mem_loss])
-		return total_loss
+		total_loss = 0.5 * tf.add_n([real_loss, gen_loss, mem_loss])
+		return tf.reduce_mean(total_loss)
 
 	def network_variables(self):
+		#it might not be the fastest way to go from rank 2 to 1 but it works
 		op_var = []
 		for chip in self.layers:
 			op_var.extend(chip)
 		return op_var
 
-genos_layers = [[10, 200], [200, 200], [200, 200], [200, 784]]
+genos_layers = [[10, 500], [500, 500], [500, 784]]
 genos = generator(genos_layers)
 
 
 
-disky = discriminator([[784, 10], [10, 1]])
+disky = discriminator([[784, 500], [500, 500], [500, 1]])
 
 with tf.name_scope("disky_train"):
 	forword = genos.forward_pass()
-
+	print(forword)
 	disc_loss = disky.generator_loss(forword)
 
 	disky_optimizer = tf.train.AdamOptimizer().minimize(disc_loss, var_list=disky.network_variables())
 
+	disky.memory_tensor = tf.concat([disky.memory_tensor, forword], 0)
 
 with tf.name_scope("genos_train"):
 	gen_pass = genos.forward_pass()
 	disc_logits = disky.forward_pass(gen_pass)
 	genos_loss = genos.discriminator_loss(disc_logits)
 
+	print(genos.network_variables())
 	genos_optimizer = tf.train.AdamOptimizer().minimize(genos_loss, var_list=genos.network_variables())
 
+discriminator_special = tf.reduce_mean(tf.sigmoid(disc_logits))
 
-#Note: when training the discriminator use dropout but when training the generator with discriminator info disable dropout
+def camera_ready(generated_img):
+	generated_img = tf.nn.relu(generated_img)
+	sig = tf.tanh(generated_img)
+	scaled = tf.scalar_mul(255, sig)
+	return tf.cast(scaled, tf.int32)
+
 with tf.Session() as sesh:
 	init_op = tf.global_variables_initializer()
 	sesh.run(init_op)
 	train_writer = tf.summary.FileWriter('logs/adversarial_net_v3',
                                           sesh.graph)
 
+	
+	for i in range(100001):
+		real_batch, _ = mnist.train.next_batch(minibatch_size)
+		disc_opt, memo  = sesh.run([disky_optimizer, disky.memory_tensor], feed_dict={disky.dropout_prob: 1.0, disky.real_examples: real_batch})
+		print(memo.shape)
 
+		if i % k_disc_train_steps == 0:
+			fishscale, _ = mnist.train.next_batch(minibatch_size)
+			gen_opt, dsc, d_loss, g_loss, mem = sesh.run([genos_optimizer, discriminator_special, disc_loss, genos_loss, disky.memory_tensor], feed_dict={disky.dropout_prob: 1.0, disky.real_examples: fishscale})
+
+			print("fool_level: " + str(d_loss))
+			
+			print("disc_loss: " + str(d_loss))
+			print("genos_loss: " + str(g_loss))
+			print()
+		if i % 1000 == 0:
+			group_size = 100
+			last_pass = genos.forward_pass(batch_size=group_size)
+			disc_curr_gen = disky.forward_pass(last_pass)
+
+			cmra = camera_ready(last_pass)
+			disc_curr_gen = tf.sigmoid(disc_curr_gen)
+
+			output_set, disc_score = sesh.run([cmra, disc_curr_gen])
+				
+			top_index = np.argmax(disc_score)
+
+			disc_score = np.reshape(disc_score, (group_size))
+
+			top_array = np.argsort(disc_score, axis=0)
+
+
+			print(disc_score)
+			
+			print(top_array)
+			for j in range(20):
+				dir_name = "GAN_generated/adversarial_testing_" + str(i) + "/"
+
+				if not os.path.exists(dir_name):
+					os.mkdir(dir_name)
+
+				output_img = output_set[top_array[j]]
+
+				print(cv2.imwrite(dir_name + "number_" + str(j) + ".png", np.reshape(output_img, (28, 28))))
 
 
 
