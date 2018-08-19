@@ -10,33 +10,13 @@ mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
 gen_seed_size = 3
 minibatch_size = 128
 
-#play with this value more, potentially lower it to fifty
 k_disc_train_steps = 1
 
-#run two different examples through the discriminate network using the same weights and biases
-
-#problem with this network: many examples are generated near class boundaries, you need a way to generate more discriminative results
-
-#use experience replay, replaying experiences to the discriminator and generator so that they don't get trapped in local minimums
-#check out this paper for solving that issue
-#https://arxiv.org/pdf/1711.01575.pdf
-
-#note: the loss for the generator currently is based on both the examples in memory and the currently generated models
-#		a solution would be to create a real/dream dataset mix and a real/current_generated dataset mix
-#Note: the generator still degrades after about 60,000 steps
-
-
-#Note: the replay isn't working properly, it's degrading after only 20000 steps
-#Note: try updating G once for every k step updates of D, this keeps 
-
-#Note: as of now, the discriminator is learning how to draw zeroes very well
-#Note: the generator seems to really just get good at drawing one number at a time, first it was zeroes now it's 3s
-
-#Note: try changing the random data that is fed to the network, right now it's normalized, denormalize it
-
-fake_one_hot = tf.constant([0.0, 0.1], dtype=tf.float32)
-real_one_hot = tf.constant([1.0, 0.0], dtype=tf.float32)
-
+max_memory_length = 128
+max_memory_length = tf.constant(max_memory_length, dtype=tf.int32)
+#Note: for the discriminator, just use the replay buffer, don't use the current sample and the buffer
+#Note: also switch to one hot with discriminator [turns out that doesn't work]
+#Note: keep the replay buffer at a fixed size
 class generator():
 	def __init__(self, layer_array, noise_size=10):
 		#layer_array is an array of tuples that defines the layers of the network
@@ -63,7 +43,7 @@ class generator():
 				layer_n = self.layers[i]
 				mul_value = tf.matmul(prev_layer_activation, layer_n[0])
 				add_value = tf.add(mul_value, layer_n[1])
-				activation = tf.nn.relu(add_value)
+				activation = tf.nn.leaky_relu(add_value)
 				prev_layer_activation = activation
 				print("worked_fine")
 
@@ -82,11 +62,7 @@ class generator():
 		return tf.random_normal(shape, stddev=0.1)
 		#return np.random.uniform(shape)
 	def discriminator_loss(self, discriminator_grade):
-		grade_length = tf.shape(discriminator_grade)[0]
-
-		grade_labels = tf.tile(real_one_hot, [grade_length])
-		grade_labels = tf.reshape(grade_labels, [grade_length, 2])
-		loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=discriminator_grade, labels=grade_labels)
+		loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=discriminator_grade, labels=tf.ones_like(discriminator_grade))
 		return tf.reduce_mean(loss)
 	def network_variables(self):
 		op_var = []
@@ -120,7 +96,7 @@ class discriminator():
 				layer_n = self.layers[i]
 				mul_value = tf.matmul(prev_layer_activation, layer_n[0])
 				add_value = tf.add(mul_value, layer_n[1])
-				activation = tf.nn.relu(add_value)
+				activation = tf.nn.leaky_relu(add_value)
 				prev_layer_activation = activation
 
 			#add dropout to the activation of the 2nd to last layer
@@ -134,8 +110,28 @@ class discriminator():
 		#change the last layer so that it doesn't do ReLU function
 		with tf.name_scope("memrise"):
 			memory = input_value
+			
 			self.memory_tensor = tf.concat([self.memory_tensor, memory], axis=0)
+			size = tf.shape(self.memory_tensor)[0]
+
+			#this keeps the replay buffer at or below a certain size
+			#you need to use tf.cond() function for if-statement in memory
+			self.memory_tensor = tf.cond(size > max_memory_length, lambda: self.chop_off(self.memory_tensor), lambda: self.no_function(self.memory_tensor))
+			
+				
+			
+
 		return op_add
+	
+	def chop_off(self, mem_tnsr):
+		size = tf.shape(mem_tnsr)[0]
+		difference = size - max_memory_length
+		new_part = mem_tnsr[difference:-1]
+		return new_part
+	
+	def no_function(self, args):
+		return args
+
 	def reminisce(self, memory_size):
 		#sample generated images from memory to help prevent catastrophic forgetting
 		max_val = tf.shape(self.memory_tensor)[0]
@@ -162,21 +158,9 @@ class discriminator():
 		mem_size = tf.shape(real_logits)[0]
 		memory_logits = self.reminisce(mem_size)
 
-		gen_length = tf.shape(generator_logits)[0]
-
-
-		gen_labels = tf.tile(fake_one_hot, [gen_length])
-		gen_labels = tf.reshape(gen_labels, [gen_length, 2])
-
-		fake_labels = tf.tile(fake_one_hot, [mem_size])
-		fake_labels = tf.reshape(fake_labels, [mem_size, 2])
-
-		real_labels = tf.tile(real_one_hot, [mem_size])
-		real_labels = tf.reshape(real_labels, [mem_size, 2])
-
-		real_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=real_logits, labels=real_labels)
-		gen_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=generator_logits, labels=gen_labels)
-		mem_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=memory_logits, labels=fake_labels)
+		real_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=real_logits, labels=tf.ones_like(real_logits))
+		gen_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=generator_logits, labels=tf.zeros_like(generator_logits))
+		mem_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=memory_logits, labels=tf.zeros_like(memory_logits))
 
 		total_loss = 0.5 * tf.add_n([real_loss, gen_loss, mem_loss])
 		return tf.reduce_mean(total_loss)
@@ -192,9 +176,8 @@ genos_layers = [[10, 500], [500, 500], [500, 784]]
 genos = generator(genos_layers)
 
 
-#making the discriminator and labels one-hot
-#convention: [1, 0]=real; [0, 1]=fake
-disky = discriminator([[784, 500], [500, 500], [500, 2]])
+
+disky = discriminator([[784, 500], [500, 500], [500, 1]])
 
 with tf.name_scope("disky_train"):
 	forword = genos.forward_pass()
@@ -211,7 +194,7 @@ with tf.name_scope("genos_train"):
 	genos_loss = genos.discriminator_loss(disc_logits)
 
 	print(genos.network_variables())
-	genos_optimizer = tf.train.AdamOptimizer().minimize(genos_loss, var_list=genos.network_variables())
+	genos_optimizer = tf.train.GradientDescentOptimizer(0.01).minimize(genos_loss, var_list=genos.network_variables())
 
 discriminator_special = tf.reduce_mean(tf.sigmoid(disc_logits))
 
@@ -261,22 +244,22 @@ with tf.Session() as sesh:
 				
 			top_index = np.argmax(disc_score)
 
-			#disc_score = np.reshape(disc_score, (group_size))
+			disc_score = np.reshape(disc_score, (group_size))
 
-			#top_array = np.argsort(disc_score, axis=0)
+			top_array = np.argsort(disc_score, axis=0)
 
 			#saver.save(sesh, file_path + "adversarial_model")
 
 			print(disc_score)
 			#print(output_set[top_index][np.argmax(output_set[top_index])])
-			#print(top_array)
+			print(top_array)
 			for j in range(20):
 				dir_name = "GAN_generated/adversarial_testing_" + str(i) + "/"
 
 				if not os.path.exists(dir_name):
 					os.mkdir(dir_name)
 
-				output_img = output_set[j]
+				output_img = output_set[top_array[j]]
 
 				print(cv2.imwrite(dir_name + "number_" + str(j) + ".png", np.reshape(output_img, (28, 28))))
 
