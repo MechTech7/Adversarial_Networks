@@ -14,13 +14,10 @@ k_disc_train_steps = 1
 
 max_memory_length = 128
 max_memory_length = tf.constant(max_memory_length, dtype=tf.int32)
-#Note: for the discriminator, just use the replay buffer, don't use the current sample and the buffer
-#Note: also switch to one hot with discriminator [turns out that doesn't work]
-#Note: keep the replay buffer at a fixed size
+
 class generator():
 	def __init__(self, layer_array, noise_size=10):
 		#layer_array is an array of tuples that defines the layers of the network
-		#
 		self.layers = []
 		self.noise_size = noise_size
 
@@ -30,10 +27,7 @@ class generator():
 			self.layers.append(layer_vars)
 			count += 1
 
-		'''input_weights, input_biases = self.generate_weights_biases([noise_size, 256])
-		input_weights'''
-	'''def forward_pass(self):
-		with tf.name_scope("generator_forward_pass"):'''
+	
 
 	def forward_pass(self, batch_size=128):
 		with tf.name_scope("generator_forward_pass"):
@@ -99,9 +93,6 @@ class discriminator():
 				activation = tf.nn.leaky_relu(add_value)
 				prev_layer_activation = activation
 
-			#add dropout to the activation of the 2nd to last layer
-			print("made it here!------------------")
-			#prev_layer_activation = tf.nn.dropout(prev_layer_activation, self.dropout_prob)
 			print(prev_layer_activation)
 			print(self.layers[-1][0])
 			op_mul = tf.matmul(prev_layer_activation, self.layers[-1][0])
@@ -115,7 +106,6 @@ class discriminator():
 			size = tf.shape(self.memory_tensor)[0]
 
 			#this keeps the replay buffer at or below a certain size
-			#you need to use tf.cond() function for if-statement in memory
 			self.memory_tensor = tf.cond(size > max_memory_length, lambda: self.chop_off(self.memory_tensor), lambda: self.no_function(self.memory_tensor))
 			
 				
@@ -146,15 +136,11 @@ class discriminator():
 
 
 	def generator_loss(self, generated_examples):
-		#toshiba
-		print("--------generated_ex-----------")
-		print(generated_examples)
-		print("-------------------------------")
 		#real_example_processing
 		real_logits = self.forward_pass(self.real_examples)
 		generator_logits = self.forward_pass(generated_examples)
 
-		#remembering...
+		#remembering
 		mem_size = tf.shape(real_logits)[0]
 		memory_logits = self.reminisce(mem_size)
 
@@ -172,11 +158,12 @@ class discriminator():
 			op_var.extend(chip)
 		return op_var
 
+#initialization of generator network
 genos_layers = [[10, 500], [500, 500], [500, 784]]
 genos = generator(genos_layers)
 
 
-
+#initialization of discriminator network
 disky = discriminator([[784, 500], [500, 500], [500, 1]])
 
 with tf.name_scope("disky_train"):
@@ -204,13 +191,7 @@ def camera_ready(generated_img):
 	scaled = tf.scalar_mul(255, sig)
 	return tf.cast(scaled, tf.int32)
 
-#Note: when training the discriminator use dropout but when training the generator with discriminator info disable dropout
-#Note: remember to have the batch_size and minibatch_size values match up 
 
-#note: there's a problem with running this on MNIST
-#over time, the output of the generator becomes a black screen
-
-#note: the discriminator isn't fooling the generator at all
 with tf.Session() as sesh:
 	init_op = tf.global_variables_initializer()
 	sesh.run(init_op)
@@ -248,10 +229,8 @@ with tf.Session() as sesh:
 
 			top_array = np.argsort(disc_score, axis=0)
 
-			#saver.save(sesh, file_path + "adversarial_model")
 
 			print(disc_score)
-			#print(output_set[top_index][np.argmax(output_set[top_index])])
 			print(top_array)
 			for j in range(20):
 				dir_name = "GAN_generated/adversarial_testing_" + str(i) + "/"
